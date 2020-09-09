@@ -3,6 +3,7 @@ from VAE import VAE
 from data import TsDataset
 from torch.optim import Adam
 import math
+import numpy as np
 
 
 class Donut:
@@ -61,6 +62,7 @@ class Donut:
         :return:
         '''
         # todo missing injection
+        self._vae.train()
         train_dataset = TsDataset(x, y)
         train_iter = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=0)
 
@@ -85,6 +87,24 @@ class Donut:
             else:
                 print("loss", l.item())
 
+    def evaluate(self,test_x, test_y):
+        # todo mcmc
+        self._vae.eval()
+        test_dataset = TsDataset(test_x, test_y)
+        test_iter = torch.utils.data.DataLoader(test_dataset, batch_size=2560, shuffle=False, num_workers=0)
+        scores = []
+        for x, y in test_iter:
+            # z的采样次数
+            z, x_miu, x_std, z_miu, z_std = self._vae(x, n_sample=20)  # 前向传播
+            # 蒙特卡洛估计 E log p(x|z), 重构概率
+            log_p_xz = - torch.log(math.sqrt(2 * math.pi) * x_std) - ((x - x_miu) ** 2) / (2 * x_std ** 2)
+            anomaly_score = - torch.mean(log_p_xz[:, :, -1], dim=0)  # 异常分数越大，越可能为异常。
+            scores.append(anomaly_score)
+        scores = torch.cat(scores)
+        # scores = torch.cat((torch.ones(self._vae.win - 1) * torch.min(scores), scores), dim=0)
+        # todo 使用segment 评判， 需要将时序恢复成原来的样本，而不是滑动窗口取到的片段
+        assert len(scores) == len(test_iter)
+        # 至此， 得到了异常分数和标签， 需要选定一个最好的异常阈值， 选用标准是 best f1 score
 
 
 
@@ -95,15 +115,3 @@ class Donut:
 
 
 
-
-
-
-            # break
-
-
-
-        # pass
-
-
-    def evaluate(self):
-        pass

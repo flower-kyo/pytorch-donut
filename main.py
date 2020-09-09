@@ -21,5 +21,5 @@ test_x, test_y = proprocess(test_x, test_y)
 # 模型训练
 model = Donut()
 model.fit(train_x, train_y, n_epoch=300, valid_x=valid_x, valid_y=valid_y)
-model.evaluate()
+model.evaluate(test_x, test_y)
 
