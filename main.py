@@ -20,6 +20,10 @@ test_x, test_y = proprocess(test_x, test_y)
 
 # 模型训练
 model = Donut()
-model.fit(train_x, train_y, n_epoch=300, valid_x=valid_x, valid_y=valid_y)
-model.evaluate(test_x, test_y)
+train_x = train_x[0].reshape(1,120)
+train_y = train_y[0].reshape(1,120)
+model.fit(train_x, train_y, n_epoch=3000, valid_x=train_x, valid_y=train_y)
+# model.fit(train_x, train_y, n_epoch=3000, valid_x=valid_x, valid_y=valid_y)
+
+# model.evaluate(test_x, test_y)
 

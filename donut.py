@@ -4,6 +4,8 @@ from data import TsDataset
 from torch.optim import Adam
 import math
 import numpy as np
+from metric import best_threshold
+from visual import restruct_compare_plot
 
 
 class Donut:
@@ -68,9 +70,9 @@ class Donut:
 
         if valid_x is not None:
             valid_dataset = TsDataset(valid_x, valid_y)
-            valid_iter = torch.utils.data.DataLoader(valid_dataset, batch_size=128, shuffle=True, num_workers=0)
+            valid_iter = torch.utils.data.DataLoader(valid_dataset, batch_size=128, shuffle=False, num_workers=0)
 
-        optimizer = Adam(self._vae.parameters(), lr=0.001)  # todo 动态学习率
+        optimizer = Adam(self._vae.parameters(), lr=0.0003, weight_decay=0.001)  # todo 动态学习率
         for epoch in range(n_epoch):
             for train_x, train_y in train_iter:
                 optimizer.zero_grad()
@@ -80,9 +82,16 @@ class Donut:
                 optimizer.step()
             if valid_x is not None:
                 with torch.no_grad():
+                    flag = 1
                     for v_x, v_y in valid_iter:
                         z, x_miu, x_std, z_miu, z_std = self._vae(v_x)
                         v_l = self.m_elbo_loss(v_x, v_y, z, x_miu, x_std, z_miu, z_std)
+                        if flag == 1:
+                            flag = 0
+                            v_x_ = v_x[0].view(1, 120)
+                            z, x_miu, x_std, z_miu, z_std = self._vae(v_x_)
+                            restruct_compare_plot(v_x_.view(120), x_miu.view(120))
+
                 print("train loss %.4f,  valid loss %.4f" %(l.item(), v_l.item()))
             else:
                 print("loss", l.item())
@@ -93,18 +102,30 @@ class Donut:
         test_dataset = TsDataset(test_x, test_y)
         test_iter = torch.utils.data.DataLoader(test_dataset, batch_size=2560, shuffle=False, num_workers=0)
         scores = []
-        for x, y in test_iter:
-            # z的采样次数
-            z, x_miu, x_std, z_miu, z_std = self._vae(x, n_sample=20)  # 前向传播
-            # 蒙特卡洛估计 E log p(x|z), 重构概率
-            log_p_xz = - torch.log(math.sqrt(2 * math.pi) * x_std) - ((x - x_miu) ** 2) / (2 * x_std ** 2)
-            anomaly_score = - torch.mean(log_p_xz[:, :, -1], dim=0)  # 异常分数越大，越可能为异常。
-            scores.append(anomaly_score)
-        scores = torch.cat(scores)
-        # scores = torch.cat((torch.ones(self._vae.win - 1) * torch.min(scores), scores), dim=0)
-        # todo 使用segment 评判， 需要将时序恢复成原来的样本，而不是滑动窗口取到的片段
-        assert len(scores) == len(test_iter)
-        # 至此， 得到了异常分数和标签， 需要选定一个最好的异常阈值， 选用标准是 best f1 score
+        with torch.no_grad():
+            for x, y in test_iter:
+                # z的采样次数
+                z, x_miu, x_std, z_miu, z_std = self._vae(x, n_sample=20)  # 前向传播
+                # 蒙特卡洛估计 E log p(x|z), 重构概率
+                log_p_xz = - torch.log(math.sqrt(2 * math.pi) * x_std) - ((x - x_miu) ** 2) / (2 * x_std ** 2)
+                anomaly_score = - torch.mean(log_p_xz[:, :, -1], dim=0)  # 异常分数越大，越可能为异常。
+                scores.append(anomaly_score)
+            scores = torch.cat(scores)
+            # scores = torch.cat((torch.ones(self._vae.win - 1) * torch.min(scores), scores), dim=0)
+            # todo 使用segment 评判， 需要将时序恢复成原来的样本，而不是滑动窗口取到的片段
+            assert len(scores) == len(test_dataset)
+            # 至此， 得到了异常分数和标签， 需要选定一个最好的异常阈值， 选用标准是 best f1 score
+            best_threshold(np.array(test_y[:, -1]), scores.detach().numpy())
+            for x, y in test_iter:
+                x_ = x[0].view(1, 120)
+                z, x_miu, x_std, z_miu, z_std = self._vae(x_)  # 前向传播
+                restruct_compare_plot(x_.view(120), x_miu.view(120))
+                break
+
+
+
+
+
 
 
 
