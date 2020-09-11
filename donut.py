@@ -2,6 +2,7 @@ import torch
 from VAE import VAE
 from data import TsDataset
 from torch.optim import Adam
+from torch.optim.lr_scheduler import StepLR
 import math
 import numpy as np
 from metric import best_threshold
@@ -9,8 +10,14 @@ from visual import restruct_compare_plot
 
 
 class Donut:
-    def __init__(self):
+    def __init__(self, CKPT_path=None):
         self._vae = VAE()
+        self.optimizer = Adam(self._vae.parameters(), lr=0.001, weight_decay=0.001)
+        if CKPT_path is not None:
+            model_CKPT = torch.load(CKPT_path)
+            self._vae.load_state_dict(model_CKPT['state_dict'])
+            self.optimizer.load_state_dict(model_CKPT['optimizer'])
+            print('load vae and optimizer form file')
 
 
     def m_elbo_loss(self, train_x, train_y, z, x_miu, x_std, z_miu, z_std):
@@ -66,21 +73,32 @@ class Donut:
         # todo missing injection
         self._vae.train()
         train_dataset = TsDataset(x, y)
-        train_iter = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=0)
+        train_iter = torch.utils.data.DataLoader(train_dataset, batch_size=256, shuffle=True, num_workers=0)
 
         if valid_x is not None:
             valid_dataset = TsDataset(valid_x, valid_y)
             valid_iter = torch.utils.data.DataLoader(valid_dataset, batch_size=128, shuffle=False, num_workers=0)
 
-        optimizer = Adam(self._vae.parameters(), lr=0.0003, weight_decay=0.001)  # todo 动态学习率
+        optimizer = self.optimizer  # todo 动态学习率
+        lr_scheduler = StepLR(optimizer, step_size=100, gamma=0.75)
         for epoch in range(n_epoch):
+            lr_scheduler.step()
             for train_x, train_y in train_iter:
                 optimizer.zero_grad()
                 z, x_miu, x_std, z_miu, z_std = self._vae(train_x)  # 前向传播
                 l = self.m_elbo_loss(train_x, train_y, z, x_miu, x_std, z_miu, z_std)
                 l.backward()
                 optimizer.step()
-            if valid_x is not None:
+
+            # 保存模型
+            if epoch % 100 == 0:
+                print("保存模型")
+                torch.save({"state_dict": self._vae.state_dict(),
+                            "optimizer": optimizer.state_dict(),
+                            "loss": l.item()}, "./model_parameters/epoch{}-loss{:.2f}.tar".format(epoch, l.item()))
+
+            # 验证集
+            if epoch % 50 == 0 and valid_x is not None:
                 with torch.no_grad():
                     flag = 1
                     for v_x, v_y in valid_iter:
@@ -91,10 +109,13 @@ class Donut:
                             v_x_ = v_x[0].view(1, 120)
                             z, x_miu, x_std, z_miu, z_std = self._vae(v_x_)
                             restruct_compare_plot(v_x_.view(120), x_miu.view(120))
-
-                print("train loss %.4f,  valid loss %.4f" %(l.item(), v_l.item()))
+                    print("train loss %.4f,  valid loss %.4f" %(l.item(), v_l.item()))
+                    with open("log.txt", "a") as f:
+                        f.writelines("%d %.4f %.4f\n" %(epoch, l.item(), v_l.item()))
             else:
-                print("loss", l.item())
+                print("loss", l.item(), "  lr,", lr_scheduler.get_last_lr())
+
+
 
     def evaluate(self,test_x, test_y):
         # todo mcmc
